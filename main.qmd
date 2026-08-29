@@ -1,0 +1,57 @@
+---
+title: "main"
+author: "Jun Kee Lee Yang"
+format: 
+    html:
+        fontsize: 1.25em
+        html-math-method: katex
+        embed-resources: true
+        self-contained-math: true
+        df-print: kable
+editor: source
+---
+
+Construyan las variables que necesiten para dar respuesta a las queries asignadas. Particularmente, deben construir una variable que represente el medio de transporte más utilizado por cada persona en la encuesta. Hint: Pueden utilizar las preguntas de la p1a_1 a la p1a_22. Si es necesario discreticen las variables continuas involucradas. Pueden obtener información sobre la eficiencia y seguridad del transporte público de las preguntas p17_1 y p17_4.
+
+```{r}
+transporte = read.csv("data/enmt_unam_raw.csv") 
+transporte
+```
+
+```{r}
+transporte <- subset(transporte, select = -c(folio, ageb, hr_ini1, min_ini1, hr_ter1, min_ter1, dura1, resul1, hr_ini2, min_ini2, hr_ter2, min_ter2, dura2, resul2, hr_ini3, min_ini3, hr_ter3, min_ter3, dura3, hr_ini4, resul3, hr_ini4, min_ini4, hr_ter4, min_ter4, dura4, resul4))
+```
+
+```{r}
+# juntar las variables de p1a en una variable
+cols_to_search <- c("p1a_1", "p1a_2", "p1a_3", "p1a_4", "p1a_5", "p1a_6", "p1a_7", "p1a_8", "p1a_9", "p1a_10", "p1a_11", "p1a_12", "p1a_13", "p1a_14", "p1a_15", "p1a_16", "p1a_17", "p1a_18", "p1a_19", "p1a_20", "p1a_21", "p1a_22")
+is_one_matrix <- transporte[cols_to_search] == 1
+col_index <- max.col(is_one_matrix, ties.method = "random")
+transporte$p1a <- cols_to_search[col_index]
+transporte$p1a[rowSums(is_one_matrix, na.rm = TRUE) == 0] <- NA
+transporte
+```
+
+```{r}
+write.csv(transporte, "enmt_unam_updated.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
