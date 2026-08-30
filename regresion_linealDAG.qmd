@@ -1,0 +1,201 @@
+
+```{python}
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LassoCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+```
+
+
+
+```{python}
+df= pd.read_csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/retoReal/enmt_unam.csv", encoding='latin-1')
+```
+
+
+```{python}
+df.head
+```
+
+```{python}
+#función lasso 
+def ejecutar_lasso(df, target_col):
+    df_num = df.select_dtypes(include=['number'])
+    df_limpio = df_num.dropna(subset=[target_col]).copy()
+    
+    X = df_limpio.drop(columns=[target_col])
+    X = X.fillna(X.median())
+    y = df_limpio[target_col]
+    
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    lasso = LassoCV(cv=5, random_state=42, max_iter=10000).fit(X_scaled, y)
+    
+    coefs = pd.Series(lasso.coef_, index=X.columns)
+    coefs_filtrados = coefs[coefs != 0]
+    
+    df_res = pd.DataFrame({
+        'Variable': coefs_filtrados.index,
+        'Coeficiente': coefs_filtrados.values,
+        'Impacto_Absoluto': coefs_filtrados.abs().values
+    }).sort_values(by='Impacto_Absoluto', ascending=False).reset_index(drop=True)
+    
+    return df_res
+```
+
+
+```{python}
+#funcion random forest 
+
+
+def ejecutar_rf(df, target_col):
+    df_num = df.select_dtypes(include=['number'])
+    df_limpio = df_num.dropna(subset=[target_col]).copy()
+    
+    X = df_limpio.drop(columns=[target_col])
+    X = X.fillna(X.median())
+    y = df_limpio[target_col]
+    
+    rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+    rf.fit(X, y)
+    
+    importancias = pd.Series(rf.feature_importances_, index=X.columns)
+    
+    df_res = pd.DataFrame({
+        'Variable': importancias.index,
+        'Importancia': importancias.values
+    }).sort_values(by='Importancia', ascending=False)
+    
+    # Filtro: conservar solo variables sobre la media de importancia
+    df_res = df_res[df_res['Importancia'] > importancias.mean()].reset_index(drop=True)
+    
+    return df_res
+```
+
+
+```{python}
+#intersecciones
+def obtener_interseccion(df_lasso, df_rf):
+    set_lasso = set(df_lasso['Variable'])
+    set_rf = set(df_rf['Variable'])
+    
+    vars_comunes = list(set_lasso.intersection(set_rf))
+    
+    # Cruzamos las métricas de ambos métodos para la tabla final
+    df_interseccion = pd.merge(df_lasso, df_rf, on='Variable', how='inner')
+    df_interseccion = df_interseccion.sort_values(by='Importancia', ascending=False).reset_index(drop=True)
+    
+    return df_interseccion
+```
+
+
+
+```{python}
+#variable 1 
+# 1. Correr Lasso
+df_lasso_p1a5 = ejecutar_lasso(df, 'p1a_5')
+
+# 2. Correr Random Forest
+df_rf_p1a5 = ejecutar_rf(df, 'p1a_5')
+
+# 3. Sacar la intersección
+df_interseccion_p1a5 = obtener_interseccion(df_lasso_p1a5, df_rf_p1a5)
+
+# Ver resultados
+print(f"Lasso encontró {len(df_lasso_p1a5)} variables.")
+print(f"Random Forest seleccionó {len(df_rf_p1a5)} variables por encima del promedio.")
+print(f"🔥 Intersección final: {len(df_interseccion_p1a5)} variables coinciden.")
+
+# Ver el DataFrame consolidado
+df_interseccion_p1a5
+
+
+```
+
+
+```{python}
+# 1. Correr Lasso
+df_lasso_p1a12 = ejecutar_lasso(df, 'p1a_12')
+
+# 2. Correr Random Forest
+df_rf_p1a12 = ejecutar_rf(df, 'p1a_12')
+
+# 3. Sacar la intersección
+df_interseccion_p1a12 = obtener_interseccion(df_lasso_p1a12, df_rf_p1a12)
+
+# Ver resultados
+print(f"Lasso encontró {len(df_lasso_p1a12)} variables.")
+print(f"Random Forest seleccionó {len(df_rf_p1a12)} variables por encima del promedio.")
+print(f"🔥 Intersección final: {len(df_interseccion_p1a12)} variables coinciden.")
+
+# Ver el DataFrame consolidado
+df_interseccion_p1a12
+```
+
+```{python}
+faltantes = set(variables_objetivo) - set(df.columns)
+print(faltantes)
+```
+
+```{python}
+# 1. Define tu lista con los nombres exactos de tus 8 variables objetivo
+variables_objetivo = ['p1a_5', 'p1a_12', 'ing_fam', 'p6', 'p26', 'p1b_12', 'h10_1', 'p1a_6', 'escol']
+
+# Diccionarios para guardar los DataFrames de cada variable
+resultados_lasso = {}
+resultados_rf = {}
+resultados_interseccion = {}
+
+# 2. Bucle para procesar cada variable objetivo
+for target in variables_objetivo:
+    print(f"Procesando: {target}...")
+    
+    # Para evitar que las otras 7 variables clave influyan en el modelo actual,
+    # creamos un df temporal excluyendo las demás variables clave
+    otras_claves = [v for v in variables_objetivo if v != target]
+    df_temp = df.drop(columns=otras_claves)
+    
+    # 1. Ejecutar Lasso
+    df_lasso = ejecutar_lasso(df_temp, target)
+    resultados_lasso[target] = df_lasso
+    
+    # 2. Ejecutar Random Forest
+    df_rf = ejecutar_rf(df_temp, target)
+    resultados_rf[target] = df_rf
+    
+    # 3. Obtener Intersección
+    df_inter = obtener_interseccion(df_lasso, df_rf)
+    resultados_interseccion[target] = df_inter
+    
+    print(f"  ✓ Lasso: {len(df_lasso)} | RF: {len(df_rf)} | 🔥 Intersección: {len(df_inter)} variables\n")
+
+# 3. Consolidar TODAS las variables únicas seleccionadas en la intersección global
+todas_las_intersecciones = set()
+for target, df_inter in resultados_interseccion.items():
+    todas_las_intersecciones.update(df_inter['Variable'].tolist())
+
+# Agregar tus 8 variables objetivo originales
+variables_finales_df = list(set(variables_objetivo).union(todas_las_intersecciones))
+
+# Crear el DataFrame definitivo reducido
+df_reducido = df[variables_finales_df]
+
+print("="*60)
+print(f"¡Proceso completado!")
+print(f"El DataFrame original pasó de {df.shape[1]} a {df_reducido.shape[1]} columnas totales.")
+```
+
+
+
+```{python}
+df_reducido
+```
+
+
+```{python}
+
+```
