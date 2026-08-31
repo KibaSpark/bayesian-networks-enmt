@@ -1,0 +1,459 @@
+
+```{python}
+import warnings
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LassoCV, LogisticRegressionCV
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import check_scoring
+from sklearn.exceptions import ConvergenceWarning
+```
+
+```{python}
+SEP = "@@"
+
+TARGETS = {
+    "ing_fam": "num",
+    "escol": "cat",
+    "p6": "cat",
+    "p26": "cat",
+    "p1b_12": "cat",
+    "h10_1": "cat",
+    "p1a_5": "cat",
+    "p1a_12": "cat",
+    "p1a_6": "cat",
+}
+
+CODIGOS_NR_DEFAULT = [8, 9, 98, 99, 998, 999, 9998, 9999]
+CODIGOS_NR_POR_COL = {}
+COLS_CONTINUAS_REALES = set("ing_fam", "p3a_2", "p3a_3", "p3a_4", "p3a_5", "p3a_6", "p3a_7", "p3a_8", "p3a_9", "p3a_10", "p3a_11", "p3a_12", "p3a_13", "p3a_14", "p3a_15", "p5", "p8", "p9", "p25_2_3", "p25_2_4", "p25_2_5", "p25_2_6", "p25_2_7", "h3", "h7", "h11_1", "h22_1_1", "h23_1_1", "h11_2", "h22_1_2", "h23_1_5", "h11_3", "h22_1_3", "h23_1_3", "h11_4", "h22_1_4", "h23_1_4", "h11_5", "h22_1_5", "h23_1_5", "h11_6", "h22_1_6", "h23_1_6", "h11_7", "h22_1_7", "h23_1_7", "h11_8", "h22_1_8", "h22_1_15") #aproximadamente 
+BLACKLIST_POR_TARGET = {}
+FORZAR_CATEGORICA = set()
+FORZAR_NUMERICA = set()
+
+UMBRAL_UNICOS_CAT = 15
+UMBRAL_NA_COL = 0.40
+FRAC_MIN_CATEGORIA = 0.01
+TEST_SIZE = 0.25
+SEED = 42
+```
+
+
+```{python}
+BLACKLIST_POR_TARGET.update({
+    # "p6":     ["p7", "p8_1", "p8_2"],   # preguntas condicionadas a tener auto
+    # "p26":    ["p27", "p28"],           # detalle del accidente
+})
+
+COLS_CONTINUAS_REALES.update({"edad", "ing_fam"})   # ampliar: tiempos, gastos, distancias
+FORZAR_CATEGORICA.update(set())                       # entidad, municipio, ocupación
+COLS_ID = {"folio"}                                   # identificadores a descartar
+```
+
+## 2. Carga y limpieza
+
+```{python}
+def aplicar_codigos_faltantes(df, cols_cat):
+    d = df.copy()
+    for col in d.columns:
+        if col in CODIGOS_NR_POR_COL:
+            codigos = CODIGOS_NR_POR_COL[col]
+        elif col in COLS_CONTINUAS_REALES:
+            codigos = []
+        elif col in cols_cat:
+            codigos = CODIGOS_NR_DEFAULT
+        else:
+            codigos = []
+        if codigos:
+            d[col] = d[col].mask(d[col].isin(codigos))
+    return d
+
+
+def detectar_tipos(df, umbral=UMBRAL_UNICOS_CAT):
+    cat, num = [], []
+    for c in df.columns:
+        if c in FORZAR_CATEGORICA:
+            cat.append(c)
+        elif c in FORZAR_NUMERICA:
+            num.append(c)
+        elif not pd.api.types.is_numeric_dtype(df[c]):
+            cat.append(c)
+        elif df[c].nunique(dropna=True) <= umbral:
+            cat.append(c)
+        else:
+            num.append(c)
+    return cat, num
+
+
+def limpiar_columnas(df, cols_cat, cols_num, cols_id=(), umbral_na=UMBRAL_NA_COL):
+    n = len(df)
+    frac_na = df.isna().mean()
+    fuera = set(frac_na[frac_na > umbral_na].index) | set(cols_id)
+    sospechosas_id = []
+    for c in df.columns:
+        u = df[c].nunique(dropna=True)
+        if u <= 1:
+            fuera.add(c)
+        elif u == n and c in cols_cat:
+            fuera.add(c)
+        elif u == n:
+            sospechosas_id.append(c)
+    cat = [c for c in cols_cat if c not in fuera]
+    num = [c for c in cols_num if c not in fuera]
+    return df.drop(columns=list(fuera)), cat, num, sorted(fuera), sospechosas_id
+
+
+def mapa_categorias_raras(serie, frac_min=FRAC_MIN_CATEGORIA):
+    f = serie.value_counts(normalize=True, dropna=True)
+    return set(f[f < frac_min].index)
+```
+
+```{python}
+df = pd.read_csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/reto/enmt_unam.csv", encoding="latin-1")
+
+cat0, num0 = detectar_tipos(df)
+df = aplicar_codigos_faltantes(df, cat0)
+cat0, num0 = detectar_tipos(df)
+df, COLS_CAT, COLS_NUM, descartadas, sospechosas = limpiar_columnas(
+    df, cat0, num0, cols_id=COLS_ID)
+
+print(f"Dimensiones: {df.shape}")
+print(f"Categóricas: {len(COLS_CAT)} | Numéricas: {len(COLS_NUM)}")
+print(f"Descartadas ({len(descartadas)}): >40% NA, constantes o ID")
+print(f"Revisar a mano (numéricas todas-únicas, ¿folios?): {sospechosas}")
+```
+```{python}
+def construir_matrices(df, target, tipo_target, cols_cat, cols_num,
+                       test_size=TEST_SIZE, seed=SEED):
+    d = df.dropna(subset=[target]).copy()
+
+    y = d[target]
+    if tipo_target == "cat":
+        y = y.astype(str).astype("category")
+        conteo = y.value_counts()
+        y = y.cat.remove_categories(conteo[conteo < 5].index)
+        d = d.loc[y.notna()]
+        y = y.loc[d.index].cat.remove_unused_categories()
+        etiquetas = dict(enumerate(y.cat.categories))
+        y = pd.Series(y.cat.codes.to_numpy(), index=d.index)
+        estratos = y if y.value_counts().min() >= 2 else None
+    else:
+        y = pd.to_numeric(y, errors="coerce")
+        d = d.loc[y.notna()]
+        y = y.loc[d.index]
+        etiquetas, estratos = None, None
+
+    cat = [c for c in cols_cat if c != target and c in d.columns]
+    num = [c for c in cols_num if c != target and c in d.columns]
+    X_raw = d[cat + num]
+
+    itr, ite = train_test_split(np.arange(len(d)), test_size=test_size,
+                                random_state=seed, stratify=estratos)
+    Xtr_raw, Xte_raw = X_raw.iloc[itr], X_raw.iloc[ite]
+    ytr, yte = y.iloc[itr], y.iloc[ite]
+
+    bloques_tr, bloques_te, mapa = [], [], {}
+
+    if cat:
+        Ctr, Cte = Xtr_raw[cat].astype(object), Xte_raw[cat].astype(object)
+        for c in cat:
+            raras = mapa_categorias_raras(Ctr[c])
+            if raras:
+                Ctr[c] = Ctr[c].where(~Ctr[c].isin(raras), "OTRAS")
+                Cte[c] = Cte[c].where(~Cte[c].isin(raras), "OTRAS")
+        Ctr, Cte = Ctr.fillna("SIN_DATO"), Cte.fillna("SIN_DATO")
+        Ctr, Cte = Ctr.astype(str), Cte.astype(str)
+
+        ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False, drop=None)
+        Dtr, Dte = ohe.fit_transform(Ctr), ohe.transform(Cte)
+
+        nombres = []
+        for col, cats in zip(cat, ohe.categories_):
+            for k in cats:
+                nombre = f"{col}{SEP}{k}"
+                nombres.append(nombre)
+                mapa[nombre] = col
+        assert len(nombres) == Dtr.shape[1]
+        bloques_tr.append(pd.DataFrame(Dtr, columns=nombres, index=Xtr_raw.index))
+        bloques_te.append(pd.DataFrame(Dte, columns=nombres, index=Xte_raw.index))
+
+    if num:
+        imp = SimpleImputer(strategy="median")
+        esc = StandardScaler()
+        Ntr = esc.fit_transform(imp.fit_transform(Xtr_raw[num]))
+        Nte = esc.transform(imp.transform(Xte_raw[num]))
+        bloques_tr.append(pd.DataFrame(Ntr, columns=num, index=Xtr_raw.index))
+        bloques_te.append(pd.DataFrame(Nte, columns=num, index=Xte_raw.index))
+        for c in num:
+            mapa[c] = c
+
+    Xtr = pd.concat(bloques_tr, axis=1)
+    Xte = pd.concat(bloques_te, axis=1)
+    return Xtr, Xte, ytr, yte, mapa, etiquetas
+```
+
+
+```{python}
+def _cv_logistica_l1(X, y, Cs, cv, max_iter, seed, regla="1se"):
+    from sklearn.model_selection import StratifiedKFold
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import balanced_accuracy_score
+    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed)
+    Xv, yv = X.to_numpy(), np.asarray(y)
+    tabla = np.zeros((len(Cs), cv))
+    for i, C in enumerate(Cs):
+        for j, (a, b) in enumerate(skf.split(Xv, yv)):
+            m = LogisticRegression(penalty="l1", solver="saga", C=C,
+                                   class_weight="balanced", max_iter=max_iter,
+                                   n_jobs=-1, random_state=seed)
+            m.fit(Xv[a], yv[a])
+            tabla[i, j] = balanced_accuracy_score(yv[b], m.predict(Xv[b]))
+    med, se = tabla.mean(axis=1), tabla.std(axis=1) / np.sqrt(cv)
+    mejor = int(np.argmax(med))
+    umbral = med[mejor] - se[mejor] if regla == "1se" else med[mejor]
+    C_1se = min(C for C, m_ in zip(Cs, med) if m_ >= umbral)
+    return C_1se, med[mejor]
+
+
+def score_lasso(Xtr, ytr, tipo, mapa, seed=SEED, cv=3, max_iter=4000, regla="1se"):
+    """LASSO real (L1) con seleccion de penalizacion por regla 1-SE.
+
+    La regla 1-SE (equivalente a lambda.1se de glmnet) elige el modelo MAS
+    penalizado cuyo desempeno en CV queda dentro de 1 error estandar del mejor.
+    Sin ella, la CV suele elegir una penalizacion tan debil que ningun
+    coeficiente llega a cero y el paso de seleccion no selecciona nada.
+    """
+    from sklearn.linear_model import Lasso, LogisticRegression
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always", ConvergenceWarning)
+        if tipo == "cat":
+            Cs = np.logspace(-3, 1, 7)
+            C_1se, mejor_score = _cv_logistica_l1(Xtr, ytr, Cs, cv, max_iter, seed,
+                                                  regla=regla)
+            m = LogisticRegression(penalty="l1", solver="saga", C=C_1se,
+                                   class_weight="balanced", max_iter=max_iter,
+                                   n_jobs=-1, random_state=seed).fit(Xtr, ytr)
+            coef = np.abs(np.atleast_2d(m.coef_)).max(axis=0)
+            hiper = {"C_1se": float(C_1se), "cv_score": float(mejor_score)}
+        else:
+            cvl = LassoCV(cv=5, max_iter=50000, n_jobs=-1, random_state=seed).fit(Xtr, ytr)
+            mse = cvl.mse_path_.mean(axis=1)
+            se = cvl.mse_path_.std(axis=1) / np.sqrt(cvl.mse_path_.shape[1])
+            k = int(np.argmin(mse))
+            techo = mse[k] + se[k] if regla == "1se" else mse[k]
+            alpha_1se = max(a for a, e in zip(cvl.alphas_, mse) if e <= techo)
+            m = Lasso(alpha=alpha_1se, max_iter=50000, random_state=seed).fit(Xtr, ytr)
+            coef = np.abs(m.coef_)
+            hiper = {"alpha_1se": float(alpha_1se), "cv_mse": float(mse[k])}
+        convergio = not any(issubclass(x.category, ConvergenceWarning) for x in w)
+
+    s = pd.Series(coef, index=Xtr.columns)
+    orig = pd.Series([mapa[c] for c in Xtr.columns], index=Xtr.columns)
+    agg = s.groupby(orig).apply(lambda g: float(np.sqrt((g ** 2).sum())))
+    dummy_top = s.groupby(orig).idxmax()
+    diag = {"convergio": convergio,
+            "frac_coef_cero": float((coef == 0).mean()),
+            "n_vars_sel": int((agg > 0).sum()), **hiper}
+    if diag["frac_coef_cero"] == 0.0:
+        print("    ADVERTENCIA: el LASSO no anulo ningun coeficiente; "
+              "revisa el rango de penalizaciones.")
+    return agg, dummy_top, diag
+```
+
+
+```{python}
+def importancia_por_grupo(modelo, X, y, mapa, scoring, grupos, n_repeats=3, seed=SEED):
+    scorer = check_scoring(modelo, scoring=scoring)
+    rng = np.random.default_rng(seed)
+    base = scorer(modelo, X, y)
+    filas = []
+    for var, cols in grupos.items():
+        caidas = []
+        bloque = X[cols].to_numpy()
+        for _ in range(n_repeats):
+            Xp = X.copy()
+            Xp[cols] = bloque[rng.permutation(len(X))]
+            caidas.append(base - scorer(modelo, Xp, y))
+        filas.append({"variable": var,
+                      "imp_media": float(np.mean(caidas)),
+                      "imp_sd": float(np.std(caidas))})
+    return pd.DataFrame(filas).set_index("variable"), float(base)
+
+
+def score_rf(Xtr, ytr, Xte, yte, tipo, mapa, seed=SEED, n_arboles=500,
+             n_repeats=4, max_grupos=150, n_sombras=15):
+    
+    rng = np.random.default_rng(seed)
+    grupos_todos = {}
+    for c in Xtr.columns:
+        grupos_todos.setdefault(mapa[c], []).append(c)
+
+    elegidas = rng.choice(list(grupos_todos), size=min(n_sombras, len(grupos_todos)),
+                          replace=False)
+    Xtr_s, Xte_s, mapa_s = Xtr.copy(), Xte.copy(), dict(mapa)
+    for v in elegidas:
+        cols = grupos_todos[v]
+        nombres = [f"SOMBRA__{c}" for c in cols]
+        Xtr_s[nombres] = Xtr[cols].to_numpy()[rng.permutation(len(Xtr))]
+        Xte_s[nombres] = Xte[cols].to_numpy()[rng.permutation(len(Xte))]
+        for nm in nombres:
+            mapa_s[nm] = f"SOMBRA__{v}"
+
+    if tipo == "cat":
+        rf = RandomForestClassifier(n_estimators=n_arboles, min_samples_leaf=5,
+                                    class_weight="balanced_subsample",
+                                    n_jobs=-1, random_state=seed)
+        scoring = "balanced_accuracy"
+    else:
+        rf = RandomForestRegressor(n_estimators=n_arboles, min_samples_leaf=5,
+                                   n_jobs=-1, random_state=seed)
+        scoring = "r2"
+    rf.fit(Xtr_s, ytr)
+
+    mdi = pd.Series(rf.feature_importances_, index=Xtr_s.columns)
+    orig = pd.Series([mapa_s[c] for c in Xtr_s.columns], index=Xtr_s.columns)
+    mdi_agg = mdi.groupby(orig).sum().sort_values(ascending=False)
+    reales = [v for v in mdi_agg.index if not str(v).startswith("SOMBRA__")]
+    candidatas = [v for v in reales if mdi_agg[v] > 0][:max_grupos]
+    sombras = [v for v in mdi_agg.index if str(v).startswith("SOMBRA__")]
+
+    grupos = {}
+    for c in Xtr_s.columns:
+        if mapa_s[c] in set(candidatas) | set(sombras):
+            grupos.setdefault(mapa_s[c], []).append(c)
+
+    imp, base = importancia_por_grupo(rf, Xte_s, yte, mapa_s, scoring, grupos,
+                                      n_repeats=n_repeats, seed=seed)
+    imp_sombras = imp.loc[[v for v in imp.index if str(v).startswith("SOMBRA__")]]
+    umbral = float(imp_sombras["imp_media"].max()) if len(imp_sombras) else 0.0
+    imp = imp.loc[[v for v in imp.index if not str(v).startswith("SOMBRA__")]].copy()
+    imp["seleccionada"] = (imp["imp_media"] > umbral) & \
+                          ((imp["imp_media"] - imp["imp_sd"]) > 0)
+    return imp, {"score_test": base, "umbral_sombra": umbral,
+                 "n_candidatas": len(candidatas)}
+```
+
+
+
+```{python}
+def intersecar(agg_lasso, imp_rf, dummy_top, top_k=3):
+    sel_l = set(agg_lasso[agg_lasso > 0].index)
+    sel_r = set(imp_rf[imp_rf["seleccionada"]].index)
+    inter = sorted(sel_l & sel_r)
+    if not inter:
+        return pd.DataFrame(columns=["variable", "score_lasso", "score_rf",
+                                     "rank_lasso", "rank_rf", "borda",
+                                     "top_k", "dummy_top", "bandera_sin_dato"])
+    d = pd.DataFrame({
+        "variable": inter,
+        "score_lasso": agg_lasso.reindex(inter).to_numpy(),
+        "score_rf": imp_rf.loc[inter, "imp_media"].to_numpy(),
+        "dummy_top": [dummy_top.get(v, v) for v in inter],
+    })
+    d["rank_lasso"] = d["score_lasso"].rank(ascending=False, method="average")
+    d["rank_rf"] = d["score_rf"].rank(ascending=False, method="average")
+    d["borda"] = (d["rank_lasso"] + d["rank_rf"]) / 2
+    d = d.sort_values("borda").reset_index(drop=True)
+    d["top_k"] = d.index < top_k
+    d["bandera_sin_dato"] = d["dummy_top"].astype(str).str.endswith(f"{SEP}SIN_DATO")
+    return d
+```
+
+# 7. Bucle principal
+
+```{python}
+TOP_K = 3
+resultados = []
+diagnosticos = []
+
+for target, tipo in TARGETS.items():
+    print(f"\n=== {target} ({tipo}) ===")
+
+    fuera = [t for t in TARGETS if t != target] + BLACKLIST_POR_TARGET.get(target, [])
+    d = df.drop(columns=[c for c in fuera if c in df.columns])
+    cat = [c for c in COLS_CAT if c in d.columns]
+    num = [c for c in COLS_NUM if c in d.columns]
+
+    Xtr, Xte, ytr, yte, mapa, etiquetas = construir_matrices(d, target, tipo, cat, num)
+    print(f"  train={Xtr.shape} test={Xte.shape} | variables originales={len(set(mapa.values()))}")
+
+    agg, dummy_top, dl = score_lasso(Xtr, ytr, tipo, mapa)
+    print(f"  LASSO: {dl['n_vars_sel']} vars | {dl['frac_coef_cero']:.1%} coefs en cero"
+          f" | convergió={dl['convergio']}")
+
+    imp, dr = score_rf(Xtr, ytr, Xte, yte, tipo, mapa)
+    print(f"  RF: score_test={dr['score_test']:.3f} | umbral sombra={dr['umbral_sombra']:.4f}"
+          f" | {int(imp['seleccionada'].sum())} vars")
+
+    inter = intersecar(agg, imp, dummy_top, top_k=TOP_K)
+
+    if len(inter) == 0:
+        print("  Intersección vacía con regla 1-SE → reintentando con lambda.min")
+        agg, dummy_top, dl = score_lasso(Xtr, ytr, tipo, mapa, regla="min")
+        inter = intersecar(agg, imp, dummy_top, top_k=TOP_K)
+        dl["regla"] = "min"
+    else:
+        dl["regla"] = "1se"
+
+    print(f"  Intersección: {len(inter)} vars | top-{TOP_K}: "
+          f"{list(inter.loc[inter['top_k'], 'variable'])}")
+
+    if inter["bandera_sin_dato"].any():
+        alerta = list(inter.loc[inter["bandera_sin_dato"], "variable"])
+        print(f"  ⚠ La categoría más influyente de {alerta} es SIN_DATO: "
+              f"probable patrón de salto. Candidatas a la blacklist.")
+
+    inter.insert(0, "target", target)
+    resultados.append(inter)
+    diagnosticos.append({"target": target, "tipo": tipo, "n_train": len(ytr),
+                         **{f"lasso_{k}": v for k, v in dl.items()},
+                         **{f"rf_{k}": v for k, v in dr.items()}})
+
+tabla = pd.concat(resultados, ignore_index=True)
+diag = pd.DataFrame(diagnosticos)
+```
+
+
+```{python}
+seleccion_final = sorted(
+    set(tabla.loc[tabla["top_k"], "variable"]) | set(TARGETS)
+)
+
+faltantes = [v for v in seleccion_final if v not in df.columns]
+assert not faltantes, f"Variables inexistentes en el dataframe: {faltantes}"
+
+print(f"Intersección completa: {tabla['variable'].nunique()} variables únicas")
+print(f"Con top-{TOP_K} por target: {len(seleccion_final)} variables "
+      f"({len(TARGETS)} objetivo + {len(seleccion_final) - len(TARGETS)} predictoras)")
+
+tabla.to_csv("seleccion_variables_largo.csv", index=False)
+diag.to_csv("diagnosticos_seleccion.csv", index=False)
+df[seleccion_final].to_csv("enmt_reducido.csv", index=False)
+pd.Series(seleccion_final, name="variable").to_csv("variables_finales.csv", index=False)
+```
+
+```{python}
+tabla.pivot_table(index="target", values="variable", aggfunc="count") \
+     .rename(columns={"variable": "n_interseccion"})
+```
+
+
+```{python}
+#| eval: false
+def seleccion_estable(df, target, tipo, cat, num, B=50, seed=SEED):
+    from collections import Counter
+    conteo, rng = Counter(), np.random.default_rng(seed)
+    for b in range(B):
+        idx = rng.choice(len(df), size=len(df) // 2, replace=False)
+        sub = df.iloc[idx]
+        Xtr, Xte, ytr, yte, mapa, _ = construir_matrices(sub, target, tipo, cat, num,
+                                                         seed=seed + b)
+        agg, dtop, _ = score_lasso(Xtr, ytr, tipo, mapa, seed=seed + b)
+        imp, _ = score_rf(Xtr, ytr, Xte, yte, tipo, mapa, seed=seed + b,
+                          n_arboles=200, n_repeats=2)
+        conteo.update(intersecar(agg, imp, dtop)["variable"])
+    return (pd.Series(conteo).sort_values(ascending=False) / B).rename("frecuencia")
+```

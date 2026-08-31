@@ -176,7 +176,7 @@ variables_config = [
     ('p26', True)         # Categórica (accidente)
 ]
 
-# Lista de TODAS las variables que son categóricas (target o predictoras)
+# Lista de todas las variables que son categóricas (target o predictoras)
 todas_categoricas = [v[0] for v in variables_config if v[1]]
 
 resultados_lasso = {}
@@ -291,8 +291,186 @@ print(f"Se identificaron {len(columnas_a_conservar)} variables clave globales.")
 ```
 
 
+PRUEBA 2 
+
 
 ```{python}
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LassoCV, LogisticRegression
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+```
+
+```{python}
+# 1. Carga de datos
+df = pd.read_csv("enmt_unam_updated.csv", encoding='latin-1')
+```
+
+```{python}
+# 2. Funciones Auxiliares
+def a_categoria_segura(serie):
+    # Convierte a texto preservando los nulos reales
+    return serie.astype(str).mask(serie.isna())
+
+def preparar_datos_encuesta(df, target_col, es_categorica, cols_categoricas_predictoras):
+    df_temp = df.copy()
+    codigos_invalidos = [98, 99, 98.0, 99.0, 998, 999]
+    df_temp = df_temp.mask(df_temp.isin(codigos_invalidos))
+    df_limpio = df_temp.dropna(subset=[target_col]).copy()
+    
+    y = df_limpio[target_col]
+    if es_categorica:
+        y = y.astype('category').cat.codes
+    
+    X_raw = df_limpio.drop(columns=[target_col], errors='ignore')
+    
+    # ¡AQUÍ ESTÁ LA MAGIA CORREGIDA! Convertimos las predictoras a string
+    if cols_categoricas_predictoras:
+        cols_presentes = [c for c in cols_categoricas_predictoras if c in X_raw.columns]
+        X_raw[cols_presentes] = X_raw[cols_presentes].apply(a_categoria_segura)
+    
+    # Ahora get_dummies sí funcionará correctamente sobre las variables categóricas
+    X = pd.get_dummies(X_raw, drop_first=True)
+    X = X.dropna(axis=1, how='all')
+    X = X.fillna(X.median(numeric_only=True))
+    X = X.fillna(0)
+    
+    return X, y
+```
+
+```{python}
+# 3. Modelos
+def ejecutar_lasso_hibrido(df, target_col, es_categorica, cols_categoricas_predictoras):
+    X, y = preparar_datos_encuesta(df, target_col, es_categorica, cols_categoricas_predictoras)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    if es_categorica:
+        # CORRECCIÓN: Nueva sintaxis para Scikit-Learn 1.8, menos iteraciones y uso de n_jobs
+        model = LogisticRegression(
+            l1_ratio=1,            # Equivalente moderno a penalty='l1'
+            solver='saga', 
+            max_iter=800,          # Reducido de 5000 a 800 para evitar bloqueos
+            random_state=42,
+            n_jobs=-1              # ¡Obliga a tu compu a usar todos sus cerebros!
+        )
+        model.fit(X_scaled, y)
+        coefs = np.abs(model.coef_).mean(axis=0)
+    else:
+        # También reducimos un poco este por seguridad (de 10000 a 2000)
+        model = LassoCV(cv=5, random_state=42, max_iter=2000, n_jobs=-1)
+        model.fit(X_scaled, y)
+        coefs = np.abs(model.coef_)
+        
+    coefs_series = pd.Series(coefs, index=X.columns)
+    coefs_filtrados = coefs_series[coefs_series != 0]
+    
+    return pd.DataFrame({
+        'Variable_Dummy': coefs_filtrados.index,
+        'Variable_Original': coefs_filtrados.index.str.split('_').str[0], 
+        'Impacto_Lasso': coefs_filtrados.values
+    }).sort_values(by='Impacto_Lasso', ascending=False)
+```
+
+```{python}
+def ejecutar_rf_hibrido(df, target_col, es_categorica, cols_categoricas_predictoras):
+    X, y = preparar_datos_encuesta(df, target_col, es_categorica, cols_categoricas_predictoras)
+    
+    if es_categorica:
+        rf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    else:
+        rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+        
+    rf.fit(X, y)
+    importancias = pd.Series(rf.feature_importances_, index=X.columns)
+    
+    df_res = pd.DataFrame({
+        'Variable_Dummy': importancias.index,
+        'Variable_Original': importancias.index.str.split('_').str[0], # Extrae el nombre original
+        'Importancia_RF': importancias.values
+    })
+    return df_res[df_res['Importancia_RF'] > importancias.mean()]
+```
+
+```{python}
+def obtener_interseccion(df_lasso, df_rf):
+    # Unimos por la VARIABLE ORIGINAL, no por la dummy específica
+    # Así, si un modelo elige 'escol_3' y otro 'escol_4', ambos coinciden en que 'escol' es importante
+    vars_lasso = set(df_lasso['Variable_Original'].unique())
+    vars_rf = set(df_rf['Variable_Original'].unique())
+    
+    interseccion = list(vars_lasso.intersection(vars_rf))
+    return interseccion
+```
+
+```{python}
+# 4. Configuración y Bucle Principal
+variables_config = [
+    ('ing_fam', False),   # Cuantitativa (Ingreso)
+    ('p6', True),         # Categórica (tiene auto propio)
+    ('escol', True),      # Categórica (Nivel educativo)
+    ('h10_1', True),      # Categórica (Género)
+    ('p1b_12', True),     # Categórica (motivo uso auto particular)
+    ('p26', True)         # Categórica (accidente)
+]
+
+# NUEVO: Detectar todas las categóricas reales del dataset
+# Asumimos que si una columna tiene menos de 20 valores únicos en la encuesta, es categórica
+todas_categoricas_reales = [col for col in df.columns if df[col].nunique() < 20]
+
+resultados_interseccion = {}
+
+for target, es_cat in variables_config:
+    tipo_str = "Categórica" if es_cat else "Cuantitativa"
+    print(f"Procesando '{target}' ({tipo_str})...")
+    
+    # Excluir las otras variables CLAVE (targets) para evitar fuga de datos
+    otras_claves = [v[0] for v in variables_config if v[0] != target]
+    df_temp = df.drop(columns=otras_claves, errors='ignore')
+    
+    # Las predictoras categóricas que sí queremos procesar
+    predictoras_cat = [c for c in todas_categoricas_reales if c in df_temp.columns and c != target]
+    
+    df_lasso = ejecutar_lasso_hibrido(df_temp, target, es_cat, predictoras_cat)
+    df_rf = ejecutar_rf_hibrido(df_temp, target, es_cat, predictoras_cat)
+    
+    interseccion = obtener_interseccion(df_lasso, df_rf)
+    resultados_interseccion[target] = interseccion
+    
+    print(f"  ✓ Lasso detectó {df_lasso['Variable_Original'].nunique()} vars | RF detectó {df_rf['Variable_Original'].nunique()} vars | 🔥 Intersección: {len(interseccion)} variables\n")
+
+# 5. Consolidación
+todas_las_intersecciones = set()
+for target, variables_inter in resultados_interseccion.items():
+    todas_las_intersecciones.update(variables_inter)
+
+variables_objetivo_nombres = [v[0] for v in variables_config]
+columnas_a_conservar = list(set(variables_objetivo_nombres).union(todas_las_intersecciones))
+
+print("="*60)
+print(f"¡Proceso completado con éxito!")
+print(f"Se identificaron {len(columnas_a_conservar)} variables clave globales.")
+```
+
+```{python}
+# 1. Crear un DataFrame de resumen para ver qué variables le tocaron a cada objetivo
+filas_resumen = []
+for target, variables in resultados_interseccion.items():
+    filas_resumen.append({
+        'Variable_Objetivo': target,
+        'Cant_Variables_Clave': len(variables),
+        'Lista_de_Variables': ", ".join(variables) # Las une con comas para que sea fácil de leer
+    })
+
+df_resumen_variables = pd.DataFrame(filas_resumen)
+
+# Mostramos el DataFrame
+df_resumen_variables 
+```
+
+```{python}
+df_resumen_variables.to_csv('archivo.csv', index=False)
 
 ```
 
