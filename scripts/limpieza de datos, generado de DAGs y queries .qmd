@@ -9,7 +9,7 @@ library(bnlearn)
 ```
 
 ```{r}
-data= read.csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/retoReal/bayesian-networks-enmt/data/enmt_unam_updated.csv")
+data= read.csv("/Users/danielavl/Downloads/Proyectos/bayesian-networks-enmt/data/enmt_unam_updated.csv")
 ```
 
 ```{r}
@@ -197,6 +197,7 @@ arc.strength(dag3, data = data_discreta, criterion = "mi")
 score(dag3, data = data_discreta, type = "bic")
 score(dag3, data = data_discreta, type = "aic")
 ```
+
 ```{r}
 best_dag=hc(data_discreta)
 ```
@@ -204,13 +205,34 @@ best_dag=hc(data_discreta)
 ```{r}
 modelstring(best_dag)
 ```
+
 ```{r}
 graphviz.plot(best_dag, shape="ellipse")
 #modelo del mejor DAG
 ```
 
-
 ```{r}
+#contestar querie 1
+#probabilidad de usar transporte público colectivo dado ingreso bajo/medio.
+print('Transporte público dado un ingreso bajo/medio')
+prob_colectivo_ing2 = cpquery(bn_mle3, event = (p1a == "p1a_5" | p1a == "p1a_4"), evidence = (ing_fam == "2"),n = 10^6)
+#probabilidad de usar auto colectivo dado ingreso bajo/medio.
+print('Auto dado un ingreso bajo/medio')
+prob_auto_ing2 = cpquery(bn_mle3, event = (p1a == "p1a_12"), evidence = (ing_fam == "2"), n = 10^6)
+#se hace la comparación para un nivel alto de ingreso.
+print('Comparación para un nivel alto de ingreso')
+prob_colectivo_ing8 = cpquery(bn_mle3, event = (p1a == "p1a_5" | p1a == "p1a_4"), evidence = (ing_fam == "8"), n = 10^6)
+prob_auto_ing8 = cpquery(bn_mle3, event = (p1a == "p1a_12"), evidence = (ing_fam == "8"), n = 10^6)
+
+#contestar querie 2
+#la probabilidad de sufrir un accidente dado que tiene un auto en casa.
+print('Sufrir un accidente dado que tiene un auto en casa')
+prob_accidente_con_auto = cpquery(bn_mle3, event = (p26 == "1"), evidence = (p6 == "1"), n = 10^6)
+#la probabilidad de sufrir un accidente dado que no tiene un auto en casa.
+print('Sufrir un accidente dado que no tiene un auto en casa')
+prob_accidente_sin_auto = cpquery(bn_mle3, event = (p26 == "1"), evidence = (p6 == "2"), n = 10^6)
+
+
 #contestar querie 4 
 print('camión fornaeo')
 #uscar camion foraneo dado que tienes cierto nivel de escolaridad
@@ -227,6 +249,7 @@ cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==3)) #secundaria
 cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==4)) #prepa 
 cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==5)) #posgrado o universiad
 
-
+ci.test("escol", "p1a", 
+        data = data_discreta,
+        test = "x2")
 ```
-
