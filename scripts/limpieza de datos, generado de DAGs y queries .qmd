@@ -9,7 +9,7 @@ library(bnlearn)
 ```
 
 ```{r}
-data= read.csv("/Users/danielavl/Downloads/Proyectos/bayesian-networks-enmt/data/enmt_unam_updated.csv")
+data= read.csv("../data/enmt_unam_updated.csv")
 ```
 
 ```{r}
@@ -232,6 +232,28 @@ prob_accidente_con_auto = cpquery(bn_mle3, event = (p26 == "1"), evidence = (p6 
 print('Sufrir un accidente dado que no tiene un auto en casa')
 prob_accidente_sin_auto = cpquery(bn_mle3, event = (p26 == "1"), evidence = (p6 == "2"), n = 10^6)
 
+#contestar querie 3
+print('diferencia H/M en uso de auto particular para ir al trabajo')
+
+# el código -1 en p1b_12 lo recodificamos a un string explícito "No aplica"
+# para no perder la fila completa con na.omit()
+data$p1b_12[data$p1b_12 %in% c(-1, 97, 99)] <- "No aplica"
+
+# 1 sola fila con código 8 (probable NS/NC) en escol, la mandamos a NA
+data$escol[data$escol == 8] <- NA
+
+# se re-factoriza data_discreta ya con los códigos corregidos
+data_discreta <- data.frame(lapply(data, as.factor))
+data_discreta <- na.omit(data_discreta)
+
+# se re-ajusta bn_mle3 con los datos ya limpios
+bn_mle3 = bn.fit(dag3, data = data_discreta, method = "mle")
+
+# P(p1b_12 = "Ir al trabajo" | sexo) comparando hombres vs mujeres
+# nota: comillas en "1" porque p1b_12 ahora mezcla números y el string
+# "No aplica", así que toda la columna quedó como texto al factorizar
+cpquery(bn_mle3, event = (p1b_12 == "1"), evidence = (sexo == 1)) #hombre
+cpquery(bn_mle3, event = (p1b_12 == "1"), evidence = (sexo == 2)) #mujer
 
 #contestar querie 4 
 print('camión fornaeo')
