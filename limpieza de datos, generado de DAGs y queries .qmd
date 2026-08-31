@@ -1,0 +1,106 @@
+---
+title: "liempieza de datos definitiva para DAGs"
+format: html
+editor: visual
+---
+```{r}
+library(bnlearn)
+```
+
+
+```{r}
+data= read.csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/retoReal/bayesian-networks-enmt/enmt_unam_updated.csv")
+```
+
+
+
+
+
+
+```{r}
+#se genera dataframe con variables necesarias 
+data <- data[, c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
+  "h21_1", "ing_fam", "cond_act", "p1b_12", "p13", "p26", "p6",
+  "ing_ind", "p1a")
+]
+```
+
+```{r}
+dim(data) #se verifica que se haya cargado bien 
+```
+```{r}
+
+#se genera la primera DAG 
+dag1= empty.graph(nodes=c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
+  "h21_1", "ing_fam", "cond_act", "p1b_12", "p13", "p26", "p6",
+  "ing_ind", "p1a"))
+
+
+```
+
+```{r}
+#se definen arcos de dag1 
+arc_set1 =matrix(c("sexo", "escol",
+                 "escol", "cond_act",
+                 "cond_act", "ing_ind",
+                 "edad_1", "ing_ind", 
+                 "ing_ind", "ing_fam", 
+                 "h21_1", "ing_fam", 
+                 "Tam_loc", "estrato", 
+                 "ing_fam", "p6", 
+                 "p6", "p13", 
+                 "p6", "p1a", 
+                 "estrato", "p1a", 
+                 "p13", "p26", 
+                 "p26", "p1a", 
+                 "p1b_12", "p1a", 
+                 "p1a", "p9"),
+               byrow=TRUE, ncol=2,
+               dimnames=list(NULL,c("from", "to")))
+                 
+  
+#  "sale", "entra" 
+```
+
+```{r}
+#se guardan arcos en dag1
+arcs(dag1)=arc_set1
+```
+
+```{r}
+graphviz.plot(dag1, shape="ellipse") #se verficia que se haya cargado la info bien 
+
+```
+```{r}
+#preparacion de datos 
+
+# Discretiza y elimina nan
+data_discreta <- data.frame(lapply(data, as.factor))
+# Elimina las filas que tengan al menos un NA
+data_discreta <- na.omit(data_discreta)
+
+
+```
+
+
+```{r} 
+#se ajusta red bn_mle1 a la dag1 por mle 
+bn_mle1 = bn.fit(dag1, data=data_discreta, method = "mle")
+
+```
+
+```{r}
+#fuerzas entre arcos de red1/dag1
+arc.strength(dag1, data = data_discreta, criterion = "mi")
+
+```
+```{r}
+score(dag1, data = data_discreta, type = "bic")
+score(dag1, data= data_discreta, type= "aic")
+
+```
+
+
+
+
+The `echo: false` option disables the printing of code (only output is displayed).
