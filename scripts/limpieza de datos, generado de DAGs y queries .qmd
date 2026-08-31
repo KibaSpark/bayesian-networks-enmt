@@ -9,7 +9,7 @@ library(bnlearn)
 ```
 
 ```{r}
-data= read.csv("/Users/danielavl/Downloads/Proyectos/bayesian-networks-enmt/data/enmt_unam_updated.csv")
+data= read.csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/retoReal/bayesian-networks-enmt/data/enmt_unam_updated.csv")
 ```
 
 ```{r}
@@ -149,6 +149,7 @@ arc.strength(dag2, data = data_discreta, criterion = "mi")
 score(dag2, data = data_discreta, type = "bic")
 score(dag2, data = data_discreta, type = "aic")
 ```
+
 ```{r}
 #se define la 3era DAG
 dag3 = empty.graph(nodes = c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
@@ -180,7 +181,6 @@ arc_set3 = matrix(c(
 ), byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
 ```
 
-
 ```{r}
 # se guardan los arcos en dag3
 arcs(dag3) = arc_set3
@@ -197,5 +197,36 @@ arc.strength(dag3, data = data_discreta, criterion = "mi")
 score(dag3, data = data_discreta, type = "bic")
 score(dag3, data = data_discreta, type = "aic")
 ```
+```{r}
+best_dag=hc(data_discreta)
+```
 
+```{r}
+modelstring(best_dag)
+```
+```{r}
+graphviz.plot(best_dag, shape="ellipse")
+#modelo del mejor DAG
+```
+
+
+```{r}
+#contestar querie 4 
+print('camión fornaeo')
+#uscar camion foraneo dado que tienes cierto nivel de escolaridad
+cpquery(bn_mle3, event= (p1a=="p1a_6"), evidence=(escol==1)) #ninguna 
+cpquery(bn_mle3, event= (p1a=="p1a_6"), evidence=(escol==2)) #primaria
+cpquery(bn_mle3, event= (p1a=="p1a_6"), evidence=(escol==3)) #secundaria  
+cpquery(bn_mle3, event= (p1a=="p1a_6"), evidence=(escol==4)) #prepa 
+cpquery(bn_mle3, event= (p1a=="p1a_6"), evidence=(escol==5)) #posgrado o universiad
+
+print('carro particular')
+cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==1)) #ninguna 
+cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==2)) #primaria
+cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==3)) #secundaria  
+cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==4)) #prepa 
+cpquery(bn_mle3, event= (p1a=="p1a_12"), evidence=(escol==5)) #posgrado o universiad
+
+
+```
 
