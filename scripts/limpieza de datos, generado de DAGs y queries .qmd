@@ -3,19 +3,14 @@ title: "liempieza de datos definitiva para DAGs"
 format: html
 editor: visual
 ---
+
 ```{r}
 library(bnlearn)
 ```
 
-
 ```{r}
-data= read.csv("C:/Users/tamar/OneDrive/Documents/5to semestre/Análisis de métodos de razonamiento e incertidumbre/retoReal/bayesian-networks-enmt/enmt_unam_updated.csv")
+data= read.csv("/Users/danielavl/Downloads/Proyectos/bayesian-networks-enmt/data/enmt_unam_updated.csv")
 ```
-
-
-
-
-
 
 ```{r}
 #se genera dataframe con variables necesarias 
@@ -28,6 +23,7 @@ data <- data[, c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
 ```{r}
 dim(data) #se verifica que se haya cargado bien 
 ```
+
 ```{r}
 
 #se genera la primera DAG 
@@ -71,6 +67,7 @@ arcs(dag1)=arc_set1
 graphviz.plot(dag1, shape="ellipse") #se verficia que se haya cargado la info bien 
 
 ```
+
 ```{r}
 #preparacion de datos 
 
@@ -82,8 +79,7 @@ data_discreta <- na.omit(data_discreta)
 
 ```
 
-
-```{r} 
+```{r}
 #se ajusta red bn_mle1 a la dag1 por mle 
 bn_mle1 = bn.fit(dag1, data=data_discreta, method = "mle")
 
@@ -94,13 +90,112 @@ bn_mle1 = bn.fit(dag1, data=data_discreta, method = "mle")
 arc.strength(dag1, data = data_discreta, criterion = "mi")
 
 ```
+
 ```{r}
 score(dag1, data = data_discreta, type = "bic")
 score(dag1, data= data_discreta, type= "aic")
 
 ```
 
-
-
-
 The `echo: false` option disables the printing of code (only output is displayed).
+
+```{r}
+# Se genera la segunda DAG
+dag2 = empty.graph(nodes=c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
+  "h21_1", "ing_fam", "cond_act", "p1b_12", "p13", "p26", "p6",
+  "ing_ind", "p1a"))
+
+# se definen arcos de dag2
+arc_set2 = matrix(c("sexo", "escol",
+                     "edad_1", "escol",
+                     "estrato", "escol",
+                     "escol", "cond_act",
+                     "sexo", "cond_act",
+                     "escol", "h21_1",
+                     "estrato", "h21_1",
+                     "h21_1", "ing_ind",
+                     "cond_act", "ing_ind",
+                     "sexo", "ing_ind",
+                     "ing_ind", "ing_fam",
+                     "estrato", "ing_fam",
+                     "ing_fam", "p6",
+                     "Tam_loc", "p6",
+                     "p6", "p1a",
+                     "ing_fam", "p1a",
+                     "escol", "p1a",
+                     "p1a", "p1b_12",
+                     "sexo", "p1b_12",
+                     "p1a", "p9",
+                     "p1a", "p13",
+                     "edad_1", "p13",
+                     "p13", "p26",
+                     "p6", "p26"),
+                   byrow=TRUE, ncol=2,
+                   dimnames=list(NULL,c("from", "to")))
+
+# se guardan arcos en dag2
+arcs(dag2) = arc_set2
+
+graphviz.plot(dag2, shape="ellipse")  # se verifica que se haya cargado bien
+
+# reutiliza data_discreta ya creada en la celda de dag1
+
+# se ajusta red bn_mle2 a la dag2 por mle
+bn_mle2 = bn.fit(dag2, data=data_discreta, method = "mle")
+
+# fuerzas entre arcos de red2/dag2
+arc.strength(dag2, data = data_discreta, criterion = "mi")
+
+score(dag2, data = data_discreta, type = "bic")
+score(dag2, data = data_discreta, type = "aic")
+```
+```{r}
+#se define la 3era DAG
+dag3 = empty.graph(nodes = c("p9", "estrato", "Tam_loc", "sexo", "edad_1", "escol",
+  "h21_1", "ing_fam", "cond_act", "p1b_12", "p13", "p26", "p6",
+  "ing_ind", "p1a"))
+
+# arcos en la 3era DAG
+arc_set3 = matrix(c(
+  "sexo", "escol",
+  "edad_1", "escol",
+  "estrato", "escol",
+  "escol", "cond_act",
+  "escol", "h21_1",
+  "cond_act", "ing_ind",
+  "h21_1", "ing_ind",
+  "ing_ind", "ing_fam",
+  "estrato", "ing_fam",
+  "ing_fam", "p6",        
+  "Tam_loc", "p1a",       
+  "p6", "p1a",            
+  "p1a", "p1b_12",        
+  "edad_1", "p13",        
+  "sexo", "p13",          
+  "p13", "p26",          
+  "p1b_12", "p26",        
+  "p26", "p9",            
+  "p6", "p9",             
+  "ing_fam", "p9"         
+), byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+```
+
+
+```{r}
+# se guardan los arcos en dag3
+arcs(dag3) = arc_set3
+
+graphviz.plot(dag3, shape = "ellipse")
+
+# ajuste por Máxima Verosimilitud (MLE)
+bn_mle3 = bn.fit(dag3, data = data_discreta, method = "mle")
+
+#fuerza entre los arcos
+arc.strength(dag3, data = data_discreta, criterion = "mi")
+
+# evaluación del ajuste del modelo
+score(dag3, data = data_discreta, type = "bic")
+score(dag3, data = data_discreta, type = "aic")
+```
+
+
